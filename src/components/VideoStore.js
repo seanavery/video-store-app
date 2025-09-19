@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { createRobotClient, GenericComponentClient, Struct } from '@viamrobotics/sdk';
+import { VideostoreClient } from '@viam-modules/videostore-js';
 import Cookies from "js-cookie";
 
 // Create a Viam client
@@ -105,8 +106,8 @@ function VideoStore({ machineId }) {
 }, [machineId, resources.length]);
     const handleVideoStoreSelect = async (resourceName) => {
         if (!viamClient || !resourceName) return;
-        const genericComponentClient = new GenericComponentClient(viamClient, resourceName);
-        setSelectedVideoStore(genericComponentClient);
+        const videostoreClient = new VideostoreClient(viamClient, resourceName);
+        setSelectedVideoStore(videostoreClient);
         setSelectedResourceName(resourceName);
     };
 
@@ -122,25 +123,33 @@ function VideoStore({ machineId }) {
             }
             setError(null);
             setFetching(true);
-            const resp = await selectedVideoStore.doCommand(
-              Struct.fromJson({
-                  command: 'fetch',
-                  from: fromUTC,
-                  to: toUTC,
-              })
-          );
-            const payload = resp?.toJson ? resp.toJson() : resp;
-            const videoBase64 = payload?.video;
-            if (!videoBase64 || typeof videoBase64 !== 'string') {
-              throw new Error('no video data in response');
+            const chunks = [];
+            console.log('Calling fetchStream with:', fromUTC, toUTC);
+            console.log('selectedVideoStore:', selectedVideoStore);
+            console.log('selectedVideoStore.fetchStream:', selectedVideoStore?.fetchStream.toString());
+            console.log('typeof fetchStream:', typeof selectedVideoStore?.fetchStream);
+            await selectedVideoStore.fetchStream(
+                fromUTC,
+                toUTC,
+                (chunk) => {
+                    console.log('fetchStream chunk callback called', chunk);
+                    if (chunk && chunk.length > 0) {
+                        chunks.push(chunk);
+                    }
+                }
+            );
+            const totalLength = chunks.reduce((sum, arr) => sum + arr.length, 0);
+            const videoBytes = new Uint8Array(totalLength);
+            let offset = 0;
+            for (const chunk of chunks) {
+                videoBytes.set(chunk, offset);
+                offset += chunk.length;
             }
-
-            const binary = atob(videoBase64);
-            const bytes = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) {
-              bytes[i] = binary.charCodeAt(i);
+            if (chunks.length === 0) {
+              console.warn("no video bytes retrieved");
+              return;
             }
-            const blob = new Blob([bytes], { type: 'video/mp4' });
+            const blob = new Blob([videoBytes], { type: 'video/mp4' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
