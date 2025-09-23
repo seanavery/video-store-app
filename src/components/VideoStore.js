@@ -45,6 +45,10 @@ function VideoStore({ machineId }) {
   const [resources, setResources] = useState([]);
   const [selectedVideoStore, setSelectedVideoStore] = useState(null);
   const [selectedResourceName, setSelectedResourceName] = useState("");
+  const videoRef = React.useRef(null);
+  const [rendering, setRendering] = useState(false);
+  const renderAbortRef = React.useRef(null);
+  const mseUrlRef = React.useRef(null);
   const [fromTime, setFromTime] = useState(() => {
     const d = new Date(Date.now() - 1 * 60 * 1000);
     const pad = (n) => String(n).padStart(2, '0');
@@ -124,10 +128,6 @@ function VideoStore({ machineId }) {
             setError(null);
             setFetching(true);
             const chunks = [];
-            console.log('Calling fetchStream with:', fromUTC, toUTC);
-            console.log('selectedVideoStore:', selectedVideoStore);
-            console.log('selectedVideoStore.fetchStream:', selectedVideoStore?.fetchStream.toString());
-            console.log('typeof fetchStream:', typeof selectedVideoStore?.fetchStream);
             await selectedVideoStore.fetchStream(
                 fromUTC,
                 toUTC,
@@ -190,6 +190,127 @@ function VideoStore({ machineId }) {
         }
     };
 
+    // const VIDEO_MIME = 'video/mp4; codecs="avc1.42E01E"';
+    const VIDEO_MIME = 'video/mp4; codecs="avc1.64001F"';
+    
+    const handleRenderStream = async () => {
+        if (!selectedVideoStore) {
+            setError('select a video-store resource first');
+            return;
+        }
+        if (!fromUTC || !toUTC) {
+            setError('select a valid time range');
+            return;
+        }
+        setError(null);
+        setRendering(true);
+
+        // Cleanup any previous session
+        try {
+            URL.revokeObjectURL(mseUrlRef.current);
+            videoRef.current.removeAttribute('src');
+            mseUrlRef.current = null;
+        } catch {}
+
+        const mediaSource = new MediaSource();
+        const objectUrl = URL.createObjectURL(mediaSource);
+        mseUrlRef.current = objectUrl;
+        if (videoRef.current) {
+            videoRef.current.src = objectUrl;
+            videoRef.current.play().catch((e) => {
+                // Autoplay might be blocked by browser policy, handle or log if needed
+                console.warn('Autoplay failed:', e);
+            });
+        }
+        
+        // Will let us cancel mid-stream
+        const abort = new AbortController();
+        renderAbortRef.current = abort;
+
+        try {
+            // wait for MSE to be ready
+            await new Promise((resolve) => {
+                mediaSource.addEventListener('sourceopen', resolve, { once: true });
+            });
+        } catch (e) {
+            setError(`Cannot create SourceBuffer for ${VIDEO_MIME}: ${e && e.message ? e.message : e}`);
+            setRendering(false);
+            try { mediaSource.endOfStream(); } catch (_) {}
+            return;
+        }
+
+        let sourceBuffer;
+        try {
+            sourceBuffer = mediaSource.addSourceBuffer(VIDEO_MIME);
+        } catch (e) {
+            setError(`Cannot create SourceBuffer for ${VIDEO_MIME}: ${e && e.message ? e.message : e}`);
+            setRendering(false);
+            try { mediaSource.endOfStream(); } catch (_) {}
+            return;
+        }
+
+        const queue = [];
+        let appending = false;
+
+        const appendNext = () => {
+            if (!sourceBuffer || appending || queue.length === 0) return;
+            appending = true;
+            const chunk = queue.shift();
+            try {
+                sourceBuffer.appendBuffer(chunk);
+            } catch (e) {
+                appending = false
+                queue.unshift(chunk)
+            }
+        }
+
+        sourceBuffer.addEventListener('updateend', () => {
+            appending = false
+            appendNext()
+        })
+
+        sourceBuffer.addEventListener('error', (event) => {
+            console.log('MSE error event:', event);
+            if (sourceBuffer && sourceBuffer.error) {
+                console.error('SourceBuffer error:', sourceBuffer.error);
+            }
+            // Try to get more info from the media element
+            if (videoRef.current && videoRef.current.error) {
+                console.error('Video element error:', videoRef.current.error);
+            }
+            // Log the state of the media source
+            if (mediaSource) {
+                console.log('MediaSource readyState:', mediaSource.readyState);
+            }
+        })
+
+        await selectedVideoStore.fetchStream(
+            fromUTC,
+            toUTC,
+            (chunk) => {
+                if (abort.signal.aborted) return;
+                if (chunk && chunk.length) {
+                    queue.push(chunk);
+                    appendNext();
+                }
+            }
+        );
+    };
+
+    const handleStopRender = () => {
+        try { renderAbortRef.current?.abort(); } catch {}
+        setRendering(false);
+        if (videoRef.current) {
+            videoRef.current.pause();
+            videoRef.current.removeAttribute('src');
+            videoRef.current.load();
+        }
+        if (mseUrlRef.current) {
+            URL.revokeObjectURL(mseUrlRef.current);
+            mseUrlRef.current = null;
+        }
+    }
+
   if (!machineId) return null;
   if (loading) return <div>Loading machine resources...</div>;
   if (error) return <div>Error: {error}</div>;
@@ -207,6 +328,9 @@ function VideoStore({ machineId }) {
       </div>
       {selectedVideoStore && (
         <div>
+          <div style={{ marginTop: 16 }}>
+            <video ref={videoRef} controls playsInline style={{ width: '100%', maxHeight: 420, background: '#000' }} />
+          </div>  
           <div style={{ marginTop: '16px' }}>
             <div style={{ fontWeight: 600, fontSize: '1.1rem', marginBottom: '8px' }}>Get storage state</div>
             <div>
@@ -245,6 +369,9 @@ function VideoStore({ machineId }) {
             <div style={{ marginTop: '8px' }}>
               <button onClick={handleFetchVideo} disabled={fetching}>
                 {fetching ? 'Fetching…' : 'Fetch video'}
+              </button>
+              <button onClick={rendering ? handleStopRender : handleRenderStream} style={{ marginLeft: 8 }}>
+                {rendering ? 'Stop render' : 'Render stream'}
               </button>
             </div>
           </div>
