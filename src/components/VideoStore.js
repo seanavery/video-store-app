@@ -131,6 +131,7 @@ function VideoStore({ machineId }) {
             await selectedVideoStore.fetchStream(
                 fromUTC,
                 toUTC,
+                "mp4",
                 (chunk) => {
                     console.log('fetchStream chunk callback called', chunk);
                     if (chunk && chunk.length > 0) {
@@ -287,6 +288,7 @@ function VideoStore({ machineId }) {
         await selectedVideoStore.fetchStream(
             fromUTC,
             toUTC,
+            "fmp4",
             (chunk) => {
                 if (abort.signal.aborted) return;
                 if (chunk && chunk.length) {

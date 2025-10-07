@@ -8,7 +8,7 @@
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^13.5.0",
-    "@viam-modules/videostore-js": "file:../viamrtsp/videostore/src/videostore_api_js/viam-modules-videostore-js-0.0.1.tgz",
+    "@viam-modules/videostore-js": "file:../viamrtsp/videostore/src/videostore_api_js/viam-modules-videostore-js-0.0.2.tgz",
     "@viamrobotics/sdk": "^0.42.0",
     "js-cookie": "^3.0.5",
     "react": "^19.1.0",
